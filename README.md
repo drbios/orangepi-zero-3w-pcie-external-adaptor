@@ -1,6 +1,3 @@
-This XML file does not appear to have any style information associated with it. The document tree is shown below.
-<!--  Created from PDF via Acrobat SaveAsXML  -->
-<!--  Mapping Table version: 28-February-2003  -->
 <TaggedPDF-doc>
 <?xpacket begin='﻿' id='W5M0MpCehiHzreSzNTczkc9d'?>
 <?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
