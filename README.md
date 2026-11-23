@@ -1,89 +1,225 @@
-# Orange Pi Zero 3W (`sun60i-a733`) — PCIe / NVMe & DietPi Optimization
+MEMORIA TÉCNICA DE HARDWARE Y SISTEMA
+Activación de PCIe Externo Waveshare en Orange Pi Zero 3W
+Recorrido de diagnóstico, compatibilidad de pines, búsqueda de GPIO, activación en caliente con SSD NVMe, servicio systemd e integración definitiva en Device Tree (DTB) sobre Allwinner sun60i-a733 en DietPi.
 
-Notas técnicas, overlays de *Device Tree* (DTB) y script de automatización para habilitar alimentación PCIe, control de ventilador, modo *headless* y rendimiento sostenido en la **Orange Pi Zero 3W** (SoC Allwinner `sun60i-a733`) ejecutando **DietPi**.
+1.	Origen de la Búsqueda: Kernel, Distro y Adaptador Waveshare
+El trabajo nació de la necesidad de aprovechar el enlace PCIe de la Orange Pi Zero 3W (SoC Allwinner A733, sun60i-a733 ) ejecutando DietPi con kernel vendor/BSP de la familia
+(como la serie	). Aunque el silicio y el controlador PCIe subyacente están
+presentes en la plataforma, conectar un adaptador PCIe externo Waveshare con una unidad SSD NVMe no levantaba el enlace de forma automática ni exponía el disco de manera confiable tras el arranque.
 
----
+En placas SBC recientes con controladores PCIe integrados o puentes externos, el rail de alimentación de 3.3 V (o habilitación de enlace/reset del adaptador) a menudo depende de una línea GPIO controlada por el SoC. Si esa línea no pasa a estado activo alto en el momento adecuado, el dispositivo NVMe no recibe energía estable o el controlador PCIe no completa la enumeración del bus durante el arranque del kernel.
 
-## Resumen de la adaptación
+2.	Por Qué Son Compatibles los Pines de Adaptadores RPI y Orange Pi Zero
+Los adaptadores y HATs pensados para cabecera de 40 pines tipo Raspberry Pi (RPI) y las placas de la familia Orange Pi Zero comparten una distribución física y eléctrica heredada del estándar de cabecera de expansión de 40 contactos (paso de 2,54 mm). Los pines de alimentación principales
+ 
+(
+ 
+y
+ 
+), tierra (
+ 
+) y buses comunes como
+ 
+,
+ 
+y
+ 
+ocupan posiciones físicas
+ 
+equivalentes en el conector.
 
-- **SoC y plataforma:** Orange Pi Zero 3W con procesador Allwinner **A733** (`sun60i-a733`), kernel vendor/BSP (por ejemplo `6.6.98-vendor-sun60iw2`) bajo **DietPi**.
-- **Alimentación PCIe (`PD23` / `gpio119`):** Definida como regulador fijo (`regulator-fixed`) en el *Device Tree* mediante overlay en lugar de depender de scripts tardíos en *userspace*.
-- **Ventilador / rail auxiliar (`PD5` / `gpio101`):** Configurado como regulador fijo en `zero3w-opt.dts`, deshabilitando `pwm-fan` cuando se usa control directo por rail/GPIO.
-- **Compatibilidad Wi-Fi y almacenamiento:** Se conservan los nodos críticos de red inalámbrica y bus SDIO/MMC (`sdmmc@4022000`, `serdes@6c00000`), evitando conflictos al deshabilitar periféricos de video/audio en modo *headless*.
-- **Rendimiento de almacenamiento:** En pruebas `fio` sobre partición `ext4` en `/mnt/nvme` (Samsung PM951 256 GB NVMe), se alcanzan lecturas/escrituras secuenciales del orden de **~650–663 MiB/s** en el enlace disponible.
+Esta compatibilidad física permite acoplar mecánicamente el adaptador Waveshare y suministrar rails de potencia sin modificar el conector, pero no garantiza que el número de GPIO en Linux ni el controlador de pines coincidan. En Raspberry Pi la numeración BCM sigue un esquema propio,
+mientras que en Allwinner	los pines se agrupan por puertos (como el puerto	,
+ 
+donde
+ 
+corresponde al índice
+ 
+y
+ 
+corresponde a
+ 
+). Por ello, un HAT o
+ 
+adaptador que utiliza un pin de control genérico exige identificar qué línea real del controlador de Allwinner gobierna la habilitación en la placa.
+ 
+Esta compatibilidad física permite acoplar mecánicamente el adaptador Waveshare y suministrar rails de potencia sin modificar el conector, pero no garantiza que el número de GPIO en Linux ni el controlador de pines coincidan. En Raspberry Pi la numeración BCM sigue un esquema propio,
+mientras que en Allwinner	los pines se agrupan por puertos (como el puerto	,
+ 
+donde
+ 
+corresponde al índice
+ 
+). Por ello, un HAT o adaptador que utiliza un pin de
+ 
+control genérico exige identificar qué línea real del controlador habilitación en la placa.
+ 
+de Allwinner gobierna la
+ 
 
----
+ 
 
-## Estructura del repositorio
+Señal / Función	Pin / Línea en Zero 3W	Comportamiento Requerido	Rol en la Integración
+Habilitación PCIe (Waveshare)	PD23 / gpio119 ( &pio 3 23 0 )	Salida en nivel alto ( out hi )	Alimenta / habilita el adaptador PCIe y permite enumerar el SSD NVMe.
+Conectividad inalámbrica	Bus SDIO / sdmmc@4022000	Activo y sin bloquear	Preserva el funcionamiento de wlan0 al limpiar nodos innecesarios.
+3.	Secuencia de Búsqueda de GPIO y Activación en Caliente del SSD
+Para localizar qué GPIO habilitaba el adaptador PCIe sin adivinar a ciegas, se empleó un enfoque metódico de prueba secuencial sobre líneas candidatas, observando tanto el estado de los pines como la aparición del enlace PCIe y del dispositivo de bloques NVMe en el kernel (mediante	,
+y los mensajes de	).
 
-```text
-.
-├── README.md
-├── zero3w-master-setup.sh
-└── overlays/
-    ├── zero3w-opt.dts
-    └── zero3w-headless-safe.dts
-Requisitos previos
-Acceso como root (o mediante sudo) en la Orange Pi Zero 3W con DietPi.
-
-Conexión a internet para instalar paquetes base y headers del kernel si están disponibles en los repositorios.
-
-Respaldo previo de /boot/dietpiEnv.txt y /boot/dietpi.txt (el script crea copia de seguridad automática de dietpiEnv.txt).
-
-Uso rápido
-Clonar o copiar los archivos en la placa y dar permisos de ejecución al script principal:
-
-Bash
-chmod +x zero3w-master-setup.sh
-Ejecutar el script como root:
-
-Bash
-sudo HEADLESS_MODE=1 CPU_GOVERNOR=performance ./zero3w-master-setup.sh
-Variables disponibles:
-
-HEADLESS_MODE=1 (por defecto): establece multi-user.target y compila/valida zero3w-headless-safe.dtbo junto con zero3w-opt.dtbo.
-
-CPU_GOVERNOR=performance (por defecto): aplica el gobernador en los núcleos cpufreq y actualiza CONFIG_CPU_GOVERNOR en /boot/dietpi.txt si existe.
-
-Reiniciar para cargar los overlays DTB:
-
-Bash
-sync && sudo reboot
-Qué hace zero3w-master-setup.sh
-Paquetes y herramientas (install_master_essentials): Instala compiladores (build-essential, cmake), utilidades de hardware y diagnóstico (pciutils, usbutils, i2c-tools, gpiod, lm-sensors, htop), device-tree-compiler (dtc / fdtoverlay) e intenta instalar linux-headers-$(uname -r) con respaldo a un conjunto mínimo de paquetes si no existe el paquete de headers exacto.
-
-CPU y servicios (tune_cpu_and_services): Ajusta scaling_governor en los núcleos disponibles, actualiza CONFIG_CPU_GOVERNOR en /boot/dietpi.txt, deshabilita zero3w-gpio119.service y servicios NVMe-oF innecesarios (nvmefc-boot-connections.service, nvmf-autoconnect.service), habilita fstrim.timer y fija multi-user.target cuando HEADLESS_MODE=1.
-
-Compilación y validación de overlays (build_and_install_zero3w_overlays):
-
-Genera y compila /boot/overlay-user/zero3w-opt.dts (PD23 = gpio119 para PCIe, PD5 = gpio101 para ventilador, y deshabilita ufs@04520000, touchscreen@14, i2s0_mach y pwm-fan).
-
-Genera y compila /boot/overlay-user/zero3w-headless-safe.dts (deshabilita nodos de display/DRM/HDMI/eDP/audio HDMI sin alterar el bus SDIO/Wi-Fi).
-
-Valida la aplicación de los .dtbo sobre /boot/dtb/allwinner/sun60i-a733-orangepi-zero3w.dtb usando fdtoverlay antes de tocar /boot/dietpiEnv.txt.
-
-Actualiza user_overlays en /boot/dietpiEnv.txt.
-
-Verificación tras el reinicio
-Tras reconectar por SSH, comprueba el estado del sistema:
-
-Bash
-systemd-analyze
-cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
-cat /sys/kernel/debug/gpio | grep -E "101|119|PD5|PD23" || true
-ip -br a show wlan0
-lspci
-lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT
-Revisa también los registros del kernel por si algún nodo deshabilitado emite advertencias en tu versión específica del BSP:
-
-Bash
-dmesg -T | grep -iE "pcie|nvme|wlan|aic|drm|hdmi|regulator"
-Notas de seguridad y mantenimiento
-Pruebas graduales: Si cambias de versión de kernel o modificas nodos de Device Tree, verifica siempre con fdtoverlay y conserva un respaldo de /boot/dietpiEnv.txt y del DTB base.
-
-Montaje persistente de NVMe: Si montas tu unidad NVMe en /mnt/nvme, configura la entrada correspondiente en /etc/fstab (preferiblemente usando UUID) y verifica con sudo mount -a.
+Un aspecto clave durante las pruebas fue la activación con el SSD conectado en caliente (o con el adaptador ya acoplado mientras el sistema estaba encendido): al conmutar la línea GPIO correcta a nivel alto, se energizaba el adaptador y se provocaba o reescaneaba la enumeración del bus PCIe para que el controlador detectara el endpoint NVMe y creara el nodo de bloque (por ejemplo
+) sin necesidad de apagar físicamente toda la placa en cada prueba.
+ 
 
 
----
 
-<FollowUp label="¿Quieres que agregue al README una sección de benchmarks con fio y montaje en /etc/fstab?"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Una vez identificada la línea	( gpio119 ) para el adaptador PCIe, se estructuró el script de
+activación para asegurar que el pin quedara en salida alta, se diera tiempo de estabilización eléctrica al adaptador y al SSD, y se forzara el reescaneo del bus PCIe si el kernel no había enumerado el dispositivo automáticamente tras energizarlo.
+ 
+4.	De Script Manual a Servicio systemd e Integración en DTB
+Ejecutar el script manualmente tras cada inicio funcionaba para validar el hardware, pero resultaba frágil en un equipo de operación continua. El siguiente paso fue encapsular la activación en un
+ 
+servicio
+ 
+(como
+ 
+) que se ejecutara temprano en el arranque
+ 
+para poner el pin en alto y dejar disponible el almacenamiento antes de que dependieran de él otros servicios o montajes.
+
+Sin embargo, depender únicamente de scripts en userspace o de	presenta limitaciones: el
+estado inicial del pin queda supeditado al orden de arranque de unidades y el kernel no conoce formalmente la relación de alimentación del hardware. Por ello, la solución definitiva consistió en
+migrar la habilitación de	( gpio119 ) directamente al Device Tree (DTB) mediante un overlay
+cargado por el gestor de arranque U-Boot antes de que el kernel inicialice el bus PCIe.
+
+5.	Archivo Overlay DTB y Procedimiento de Integración
+Para integrar la habilitación en el DTB sin modificar el archivo binario base del kernel, se creó el
+ 
+fuente de overlay
+ 
+
+usando el controlador estándar
+ 
+. En su
+ 
+se declara el nodo del kernel Linux, enlazando el
+ 
+controlador de pines
+ 
+al puerto
+ 
+(banco
+ 
+), línea
+ 
+( PD23 =
+ 
+), con polaridad
+ 
+activa alta y encendido automático desde el arranque (	y
+).
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+La integración segura del overlay en DietPi se realizó en cuatro pasos verificables:
+
+ 
+1.	Compilación del overlay con símbolos: Se compiló el fuente
+ 
+a binario
+ 
+mediante
+ 
+
+ 
+ 
+(el parámetro
+).
+ 
+conserva la tabla de símbolos necesaria para resolver
+ 
+2.	Validación offline contra el DTB base: Antes de tocar la configuración de arranque, se probó la fusión en memoria/temporal usando
+para
+confirmar que todas las rutas y referencias de nodos resolvieran sin errores.
+ 
+3.	Registro en	y limpieza de servicios previos: Se respaldó
+ 
+, se añadió
+ 
+en la directiva
+ 
+para que U-Boot
+ 
+lo aplique en cada arranque, y se deshabilitó el antiguo servicio de userspace ( systemctl
+) para evitar conflictos de propiedad sobre el GPIO.
+
+ 
+4.	Verificación tras el reinicio: Con confirmó que el regulador
+ 
+
+reclama
+ 
+
+en estado
+ 
+y
+ 
+se directamente
+ 
+desde el kernel y enumera el SSD NVMe sin intervención tardía.
