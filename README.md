@@ -1,39 +1,40 @@
-# Informe Técnico: Habilitación PCIe Waveshare e Integración DTB en Orange Pi Zero 3W (`sun60i-a733`)
+# PCIe Enablement with Waveshare PCIe to M.2 Board (C) Rev2.0 and DTB Integration on Orange Pi Zero 3W (`sun60i-a733`)
 
-## 1. Contexto de hardware y sistema
+## 1. Hardware and System Context
 
-- **Placa:** Orange Pi Zero 3W con SoC Allwinner **A733** (`sun60i-a733`).
-- **Sistema operativo y kernel:** **DietPi** sobre kernel `6.6.98-vendor-sun60iw2`.
-- **Objetivo:** Habilitar el adaptador PCIe externo **Waveshare** y la enumeración de unidad NVMe en la placa, pasando desde pruebas de control manual hasta una integración estable a nivel de *Device Tree* (DTB).
-
----
-
-## 2. Compatibilidad de pines con adaptadores RPI
-
-Los adaptadores y HATs de expansión diseñados para cabecera de 40 pines tipo Raspberry Pi comparten distribución física y rieles base en los pines expuestos, lo que permite acoplar mecánicamente el módulo en la cabecera de la placa. Sin embargo, el mapeo interno de GPIO, el controlador de pines (`pinctrl`) y los nodos del *Device Tree* corresponden al SoC Allwinner `sun60i-a733` y no al controlador de Raspberry Pi, por lo que la gestión del pin de habilitación (`PD23` / `gpio119`) debe resolverse en la capa del kernel/DTB de la Orange Pi Zero 3W.
+- **Board:** Orange Pi Zero 3W with Allwinner **A733** (`sun60i-a733`) SoC.
+- **External PCIe Adapter:** **Waveshare PCIe to M.2 Board (C) Rev2.0** (connected via a 50 mm flat PCIe FPC cable, Type D/B, with HAT-style / stacked form factor compatibility similar to Raspberry Pi 5 M.2 HAT+).
+- **OS and Kernel:** **DietPi** running kernel `6.6.98-vendor-sun60iw2`.
+- **Goal:** Enable the **Waveshare PCIe to M.2 Board (C) Rev2.0** and NVMe drive enumeration on the board, progressing from manual GPIO probing and hot-plug tests to a persistent *Device Tree* (DTB) overlay integration.
 
 ---
 
-## 3. Evolución: búsqueda de GPIO, hot-plug, servicio y DTB
+## 2. Pin Compatibility with Raspberry Pi Adapters
 
-| Etapa | Implementación | Propósito | Transición |
+Expansion HATs and adapters designed for a 40-pin Raspberry Pi header—such as the **Waveshare PCIe to M.2 Board (C) Rev2.0** and Raspberry Pi 5 M.2 HAT+ style layouts—share physical header alignment and baseline power/control pins, allowing mechanical fitting on the board header. However, internal GPIO numbering, pin controller (`pinctrl`) definitions, and *Device Tree* nodes belong to the Allwinner `sun60i-a733` SoC rather than Broadcom, so control of the enable line (`PD23` / `gpio119`) is handled through the Orange Pi Zero 3W kernel/DTB layer.
+
+---
+
+## 3. Evolution: GPIO Search, Hot-Plug, Service, and DTB
+
+| Stage | Implementation | Purpose | Transition |
 | :--- | :--- | :--- | :--- |
-| **Búsqueda secuencial de GPIO** | Script de prueba sobre líneas GPIO | Localizar qué línea controla la habilitación del adaptador PCIe | Base para controlar el pin específico (`PD23` / `gpio119`) |
-| **Activación en caliente (`hot-plug`)** | Script para energizar el adaptador y reescanear `/sys/bus/pci/rescan` | Detectar y enumerar el SSD conectado sin reiniciar todo el sistema | Se automatiza como servicio de arranque |
-| **Servicio `systemd`** | Unidad previa de `userspace` (`zero3w-gpio119.service`) | Aplicar el estado del pin tras iniciar el sistema | Se deshabilita al delegar el riel al DTB |
-| **Integración en DTB** | Overlay `/boot/overlay-user/zero3w-opt.dts` + `dietpiEnv.txt` | Declarar el riel como `regulator-fixed` en el árbol de dispositivos | Solución definitiva y reproducible |
+| **Sequential GPIO Search** | Test script across GPIO lines | Identify which pin controls power enable for the **Waveshare PCIe to M.2 Board (C) Rev2.0** | Establishes target pin (`PD23` / `gpio119`) |
+| **Hot-Plug Activation** | Script to power the adapter and trigger `/sys/bus/pci/rescan` | Detect and enumerate a connected SSD without a full reboot | Automated as a startup service |
+| **Systemd Service** | Earlier userspace unit (`zero3w-gpio119.service`) | Apply pin state after boot | Disabled once moved to DTB |
+| **DTB Integration** | Overlay `/boot/overlay-user/zero3w-opt.dts` + `dietpiEnv.txt` | Declare the rail as `regulator-fixed` in the Device Tree | Clean, boot-time integration |
 
 ---
 
-## 4. Scripts de prueba en caliente y servicio `systemd`
+## 4. Hot-Plug Script and Systemd Service Transition
 
-### Script de activación y reescaneo PCIe (`hot-plug`)
+### PCIe Hot-Plug / Bus Rescan Script
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Activa la enumeracion del bus PCIe tras energizar el adaptador y el SSD
+# Trigger PCIe bus rescan after powering the Waveshare PCIe to M.2 Board (C) Rev2.0 and SSD
 if [ -e /sys/bus/pci/rescan ]; then
   echo 1 > /sys/bus/pci/rescan
 fi
@@ -42,9 +43,9 @@ lspci -nn
 lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT
 ```
 
-### Transición desde servicio `systemd` hacia DTB
+### Transitioning from Systemd Service to DTB
 
-En la etapa previa de *userspace* se utilizaba un servicio (`zero3w-gpio119.service`) para manipular el pin. Al mover la definición del riel al *Device Tree* como regulador fijo (`regulator-fixed`), el servicio de `sysfs` se deshabilita para evitar conflictos o redundancias:
+During earlier userspace testing, `zero3w-gpio119.service` handled the pin via `sysfs`. After defining the rail as a `regulator-fixed` node in the *Device Tree*, the legacy service is disabled:
 
 ```bash
 sudo systemctl disable zero3w-gpio119.service 2>/dev/null || true
@@ -52,9 +53,9 @@ sudo systemctl disable zero3w-gpio119.service 2>/dev/null || true
 
 ---
 
-## 5. Archivo overlay DTB (`zero3w-opt.dts`) e integración
+## 5. DTB Overlay (`zero3w-opt.dts`) and Integration Steps
 
-El riel de alimentación PCIe (`PD23` / `gpio119`) se define como `regulator-fixed` en `/boot/overlay-user/zero3w-opt.dts`, junto con la deshabilitación de nodos no utilizados en el fragmento de optimización:
+The PCIe power rail (`PD23` / `gpio119`) for the **Waveshare PCIe to M.2 Board (C) Rev2.0** is defined as a `regulator-fixed` node in `/boot/overlay-user/zero3w-opt.dts`, alongside disabling unused nodes in the optimization fragments:
 
 ```dts
 /dts-v1/;
@@ -100,16 +101,16 @@ El riel de alimentación PCIe (`PD23` / `gpio119`) se define como `regulator-fix
 };
 ```
 
-### Pasos para compilar, validar e integrar el overlay
+### Compile, Validate, and Enable
 
-1. **Compilar el `.dts` a `.dtbo`:**
+1. **Compile `.dts` into `.dtbo`:**
 
    ```bash
    sudo mkdir -p /boot/overlay-user
    sudo dtc -@ -I dts -O dtb -o /boot/overlay-user/zero3w-opt.dtbo /boot/overlay-user/zero3w-opt.dts
    ```
 
-2. **Validar offline con `fdtoverlay` contra el DTB base:**
+2. **Validate offline with `fdtoverlay` against the base DTB:**
 
    ```bash
    sudo fdtoverlay -i /boot/dtb/allwinner/sun60i-a733-orangepi-zero3w.dtb \
@@ -118,17 +119,27 @@ El riel de alimentación PCIe (`PD23` / `gpio119`) se define como `regulator-fix
    rm -f /tmp/zero3w-merged-check.dtb
    ```
 
-3. **Registrar en `/boot/dietpiEnv.txt` y reiniciar:**
+3. **Back up `/boot/dietpiEnv.txt`, configure `user_overlays`, and reboot:**
 
    ```bash
    sudo cp -a /boot/dietpiEnv.txt "/boot/dietpiEnv.txt.bak.$(date +%Y%m%d%H%M%S)"
    ```
 
-   Asegura que `user_overlays=zero3w-opt` (o incluyendo overlays adicionales compatibles) esté configurado en `/boot/dietpiEnv.txt`, deshabilita `zero3w-gpio119.service` y reinicia con `sync && sudo reboot`.
+   Ensure `user_overlays=zero3w-opt` (or your active overlay list) is set in `/boot/dietpiEnv.txt`, disable `zero3w-gpio119.service`, and reboot with `sync && sudo reboot`.
 
 ---
 
-## 6. Verificación tras reiniciar
+## 6. Photos (Optional)
+
+Add photos to a folder such as `docs/` or `assets/` in your repository and reference them with relative paths:
+
+```markdown
+![Waveshare PCIe to M.2 Board (C) Rev2.0 setup on Orange Pi Zero 3W](docs/zero3w-waveshare-setup.jpg)
+```
+
+---
+
+## 7. Post-Reboot Verification
 
 ```bash
 lspci
