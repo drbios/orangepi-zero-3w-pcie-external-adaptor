@@ -1,4 +1,4 @@
-# Technical Report: PCIe Enablement with Waveshare PCIe to M.2 Board (C) Rev2.0 and DTB Integration on Orange Pi Zero 3W (`sun60i-a733`)
+# PCIe Enablement with Waveshare PCIe to M.2 Board (C) Rev2.0 and DTB Integration on Orange Pi Zero 3W (`sun60i-a733`)
 
 ## 1. Hardware and System Context
 
