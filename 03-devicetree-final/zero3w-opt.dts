@@ -1,0 +1,51 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			zero3w-pcie-en {
+				compatible = "regulator-fixed";
+				regulator-name = "zero3w-pcie-en";
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+				gpio = <&pio 3 23 0>; /* PD23 = gpio119 */
+				enable-active-high;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			zero3w-fan-en {
+				compatible = "regulator-fixed";
+				regulator-name = "zero3w-fan-en";
+				regulator-min-microvolt = <5000000>;
+				regulator-max-microvolt = <5000000>;
+				gpio = <&pio 3 5 0>; /* PD5 = gpio101 */
+				enable-active-high;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc@3000000/ufs@04520000";
+		__overlay__ { status = "disabled"; };
+	};
+
+	fragment@2 {
+		target-path = "/soc@3000000/twi@251C000/touchscreen@14";
+		__overlay__ { status = "disabled"; };
+	};
+
+	fragment@3 {
+		target-path = "/soc@3000000/i2s0_mach";
+		__overlay__ { status = "disabled"; };
+	};
+
+	fragment@4 {
+		target-path = "/soc@3000000/pwm-fan";
+		__overlay__ { status = "disabled"; };
+	};
+};

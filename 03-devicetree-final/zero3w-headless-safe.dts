@@ -1,0 +1,16 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0  { target-path = "/soc@3000000/sunxi-drm";         __overlay__ { status = "disabled"; }; };
+	fragment@1  { target-path = "/soc@3000000/hdmi0@5520000";     __overlay__ { status = "disabled"; }; };
+	fragment@2  { target-path = "/soc@3000000/edp0@5720000";      __overlay__ { status = "disabled"; }; };
+	fragment@3  { target-path = "/soc@3000000/hdmi_codec";        __overlay__ { status = "disabled"; }; };
+	fragment@4  { target-path = "/soc@3000000/i2s3_mach";         __overlay__ { status = "disabled"; }; };
+	fragment@5  { target-path = "/soc@3000000/i2s3_plat@2535000"; __overlay__ { status = "disabled"; }; };
+	fragment@6  { target-path = "/soc@3000000/de@5000000";        __overlay__ { status = "disabled"; }; };
+	fragment@7  { target-path = "/soc@3000000/vo0@5500000";       __overlay__ { status = "disabled"; }; };
+	fragment@8  { target-path = "/soc@3000000/vo1@5510000";       __overlay__ { status = "disabled"; }; };
+	fragment@9  { target-path = "/soc@3000000/tcon3@5730000";     __overlay__ { status = "disabled"; }; };
+	fragment@10 { target-path = "/soc@3000000/tcon4@5731000";     __overlay__ { status = "disabled"; }; };
+};
