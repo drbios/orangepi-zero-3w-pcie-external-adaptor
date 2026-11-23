@@ -172,17 +172,7 @@ The PCIe power rail (`PD23` / `gpio119`) for the **Waveshare PCIe to M.2 Board (
 
 ---
 
-## 7. Photos (Optional)
-
-Add photos to a folder such as `docs/` or `assets/` in your repository and reference them with relative paths:
-
-```markdown
-![Waveshare PCIe to M.2 Board (C) Rev2.0 setup on Orange Pi Zero 3W](docs/zero3w-waveshare-setup.jpg)
-```
-
----
-
-## 8. Post-Reboot Verification
+## 7. Post-Reboot Verification
 
 ```bash
 lspci
