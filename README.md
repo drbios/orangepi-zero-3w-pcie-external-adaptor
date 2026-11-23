@@ -44,7 +44,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 for pin in $(seq "$START_GPIO" "$END_GPIO"); do
-  if [ -d "/sys/class/gpio/gpio${pin}" ] || echo "$pin" > /sys/class/gpio/export 2>/dev/null; then
+  if [ -d "/sys/class/gpio/gpio${pin}" ] \vert{}\vert{} echo "$pin" > /sys/class/gpio/export 2>/dev/null; then
     echo "out" > "/sys/class/gpio/gpio${pin}/direction" 2>/dev/null || true
     echo 1 > "/sys/class/gpio/gpio${pin}/value" 2>/dev/null || true
     echo "--- Active probe: gpio${pin} (HIGH) | Press Ctrl+C if red LED turns on ---"
@@ -69,4 +69,123 @@ done
 
 ---
 
-## 5. Hot-Plug Script and
+## 5. Hot-Plug Script and Systemd Service Transition
+
+### PCIe Hot-Plug / Bus Rescan Script
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Trigger PCIe bus rescan after powering the Waveshare PCIe to M.2 Board (C) Rev2.0 and SSD
+if [ -e /sys/bus/pci/rescan ]; then
+  echo 1 > /sys/bus/pci/rescan
+fi
+
+lspci -nn
+lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT
+```
+
+### Transitioning from Systemd Service to DTB
+
+During earlier userspace testing, `zero3w-gpio119.service` handled the pin via `sysfs`. After defining the rail as a `regulator-fixed` node in the *Device Tree*, the legacy service is disabled:
+
+```bash
+sudo systemctl disable zero3w-gpio119.service 2>/dev/null || true
+```
+
+---
+
+## 6. DTB Overlay (`zero3w-opt.dts`) and Integration Steps
+
+The PCIe power rail (`PD23` / `gpio119`) for the **Waveshare PCIe to M.2 Board (C) Rev2.0** is defined as a `regulator-fixed` node in `/boot/overlay-user/zero3w-opt.dts`, alongside disabling unused nodes in the optimization fragments:
+
+```dts
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			zero3w-pcie-en {
+				compatible = "regulator-fixed";
+				regulator-name = "zero3w-pcie-en";
+				regulator-min-microvolt = <3300000>;
+				regulator-max-microvolt = <3300000>;
+				gpio = <&pio 3 23 0>; /* PD23 = gpio119, active high */
+				enable-active-high;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc@3000000/ufs@04520000";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@2 {
+		target-path = "/soc@3000000/twi@251C000/touchscreen@14";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@3 {
+		target-path = "/soc@3000000/i2s0_mach";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+};
+```
+
+### Compile, Validate, and Enable
+
+1. **Compile `.dts` into `.dtbo`:**
+
+   ```bash
+   sudo mkdir -p /boot/overlay-user
+   sudo dtc -@ -I dts -O dtb -o /boot/overlay-user/zero3w-opt.dtbo /boot/overlay-user/zero3w-opt.dts
+   ```
+
+2. **Validate offline with `fdtoverlay` against the base DTB:**
+
+   ```bash
+   sudo fdtoverlay -i /boot/dtb/allwinner/sun60i-a733-orangepi-zero3w.dtb \
+     -o /tmp/zero3w-merged-check.dtb \
+     /boot/overlay-user/zero3w-opt.dtbo
+   rm -f /tmp/zero3w-merged-check.dtb
+   ```
+
+3. **Back up `/boot/dietpiEnv.txt`, configure `user_overlays`, and reboot:**
+
+   ```bash
+   sudo cp -a /boot/dietpiEnv.txt "/boot/dietpiEnv.txt.bak.$(date +%Y%m%d%H%M%S)"
+   ```
+
+   Ensure `user_overlays=zero3w-opt` (or your active overlay list) is set in `/boot/dietpiEnv.txt`, disable `zero3w-gpio119.service`, and reboot with `sync && sudo reboot`.
+
+---
+
+## 7. Photos (Optional)
+
+Add photos to a folder such as `docs/` or `assets/` in your repository and reference them with relative paths:
+
+```markdown
+![Waveshare PCIe to M.2 Board (C) Rev2.0 setup on Orange Pi Zero 3W](docs/zero3w-waveshare-setup.jpg)
+```
+
+---
+
+## 8. Post-Reboot Verification
+
+```bash
+lspci
+lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT
+dmesg -T | grep -iE "pcie|nvme|regulator|119|PD23"
+```
